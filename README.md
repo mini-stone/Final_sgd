@@ -1,2 +1,93 @@
-# Final_sgd
-private final_report
+## Problem Description: Stress-Based Graph Drawing (SGD Graph Layout)
+
+### Graph drawing as stress minimization
+In this project, each input instance is an undirected (typically sparse) graph \(G=(V,E)\). The goal of graph drawing is to find 2D coordinates \(X=\{X_i\in\mathbb{R}^2\}\) for all vertices so that *graph-theoretic distances* are reflected by *Euclidean distances* in the layout.
+
+A common formulation is **multidimensional scaling (MDS)** with the **stress** objective:
+\[
+\text{stress}(X)=\sum_{i<j} w_{ij}\left(\|X_i-X_j\|-d_{ij}\right)^2 .
+\]
+Here, \(d_{ij}\) is the “ideal distance” between vertices \(i\) and \(j\), usually chosen as the **shortest-path distance** in the graph; \(w_{ij}\) is a weight to control how much each pair matters (a typical choice is \(w_{ij}=d_{ij}^{-2}\), so long-range pairs do not dominate). Minimizing stress does not guarantee perfect distance matching (e.g., many graphs cannot be embedded in 2D without distortion), but it provides a clear, quantitative target for comparing layouts.
+
+### Stochastic Gradient Descent (SGD) for stress-based layout
+Instead of updating all vertices using the full gradient, the SGD method optimizes stress by repeatedly picking a **single pair** \((i,j)\) and updating only \(X_i\) and \(X_j\). For the pairwise term
+\[
+Q_{ij}(X)=w_{ij}\left(\|X_i-X_j\|-d_{ij}\right)^2,
+\]
+the update moves \(i\) and \(j\) along the direction that reduces the gap between the current distance \(\|X_i-X_j\|\) and the target distance \(d_{ij}\). Intuitively, it is like “relaxing one spring at a time”: if the pair is too far apart, pull them closer; if too close, push them apart.
+
+A practical detail in the paper is to cap the effective step so a single update does not overshoot too aggressively: the step coefficient is limited by
+\[
+m=\min(w_{ij}h,\;1),
+\]
+where \(h\) is a global step size (learning rate). This makes the early iterations stable even with large \(h\), while later iterations behave like standard SGD as \(h\) becomes small.
+
+### Step-size schedule and randomness
+Because stress landscapes have many local minima, SGD uses a **step-size annealing schedule**: start with a large step to escape bad local structures, then gradually reduce the step to refine the layout. The method also benefits from processing pairs in a randomized order (e.g., random reshuffling each iteration) to avoid systematic bias from a fixed update sequence.
+
+In summary, the stress-based graph drawing problem in our pipeline is:  
+**given a graph instance, output 2D coordinates that minimize stress; evaluate solvers by their achieved stress (and derived metrics) under fixed runtime/validation constraints.** :contentReference[oaicite:0]{index=0}
+
+**Readme/prompt** 
+
+**baseline** 
+
+**solver.py** 
+
+* gemini2.5pro：
+
+  With Geimini2.5 pro, we had the best results. In the solution, the proposed solver uses the Stress Majorization algorithm to optimize the graph layout. The process has three main steps:
+
+  First, the code calculates the All-Pairs Shortest Path (APSP). The graph distance matrix D is needed for the stress function. If the graph size N is larger than 150, the code uses `multiprocessing.Pool` to calculate shortest paths in parallel. This saves a lot of time compared to single thread.
+
+  Second, for the initialization, the code uses Spectral Layout from `NetworkX`. The baseline code uses random initialization. Random start is not usually not ideal because the optimization can trap in local minimum. Spectral layout puts nodes in a good global structure at the beginning.
+
+  Third, the optimization loop uses the majorization formula. It computes the weight matrix $W$ where $w_{ij} = d_{ij}^{-2}$. Then it updates the coordinates $X$ using matrix multiplication. This is vectorized by NumPy, so it is faster than Python loops.
+
+  Compared with the baseline, the new code performs better because the Spectral Initialization gives a correct global shape, and Stress Majorization refines the local details accurately. Although calculating APSP takes time, the quality of the final graph is much higher.
+
+* gemini2.0-flash
+
+  The solver provided by 2.0flash is very slow and causes timeouts on many datasets. In the implementation, the main problem is the Python loops. In the optimization part, the code uses nested `for` loops to compute the stress gradient:
+
+  ```python
+  for i in range(n):
+      for j in range(i + 1, n):
+          # ... math operations ...
+  ```
+
+  Because of this, most graphs cannot finish within the time limit. Also, the initialization uses `nx.spring_layout`, which takes a long time to run.
+
+  Although we let the LLM save the optimization results at short intervals, the timeout check in the solver is placed in the wrong place. The code only checks `over_time` at the start of each iteration. Since the double loop is very slow, one iteration can take more than 180 seconds. Once the code enters the loops, it cannot stop or check the time.
+
+* kimi-latest
+
+  The code generated by Kimi has fatal errors and cannot work properly. In the part that handles disconnected graphs, the code flattens the distance matrix into a 1D vector and tries to pass it back to the `shortest_path` function. This causes a dimension mismatch, which will immediately raise an exception, and the solver cannot produce any output.
+
+  In addition, `sklearn.manifold.MDS` is too heavy. It uses too much memory and CPU time, so it is not suitable for larger graphs compared to simple gradient descent methods.
+
+  The timeout handling is also incorrect. Instead of saving the current best result when the time runs out, the code raises a `TimeoutError`. This makes the program exit with a failure status and results in a zero score during evaluation. The solver should always write a result file before exiting.
+
+* gemini3-pro-preview
+
+  This solver uses a size-aware strategy instead of a single method for all graphs. It first splits the graph into connected components and processes each component independently. For small components, it applies full stress majorization (SMACOF), computing all-pairs shortest-path distances and solving the majorization update with Cholesky factorization, combined with spectral initialization. For large components, it switches to a pivot-based SGD approach, where only distances from a small set of pivot nodes are used to approximate the stress objective, and applies mini-batch updates.
+
+  Although this design is theoretically sound and computationally efficient, the overall layout quality is limited, even worse than the baseline. 
+
+  For large graphs, it optimizes an approximated objective using only edges and pivot-to-node pairs, instead of all node pairs with true graph distances as in the baseline, which weakens global structural constraints. Its SGD updates are also less stable, with a simple learning-rate decay and no per-update clipping, making convergence sensitive to time limits. For small graphs, the SMACOF branch spends significant time on dense matrix operations, leaving fewer iterations for refinement. As a result, under the same time budget, the solver often stops before reaching a good layout, while the simpler baseline achieves more consistent results.
+
+**eval**
+
+### Figure 1 Analysis (Multi-model performance across iterations)
+![Figure 1. Multi-LLMs performance across iterations on the SGD graph layout task.](image.png)
+Figure 1 compares four LLMs over three iterations using **Stress Ratio** (SR, left axis; higher is better) and the **geometric mean stress cost** (GM, right axis; lower is better). Overall, the two metrics are consistent: when SR drops, GM usually increases, indicating worse layouts with higher stress.
+
+Among all models, **gemini2.0-flash** is the most stable. Its SR stays close to 1.0 and slightly improves by iteration 3 (about 0.95 → 1.02), while GM remains nearly flat, suggesting steady solver quality without large regressions. In contrast, **Gemini3-pro-preview** shows clear degradation across iterations (SR decreases from ~0.60 to ~0.34 and GM increases from ~25k to ~45k), implying the iterative updates did not produce better heuristics.
+
+**Gemini2.5pro** exhibits non-monotonic behavior: it improves at iteration 2 (SR peaks around 1.27 with low GM), but collapses at iteration 3 (SR drops to ~0.40 and GM jumps to ~35k). This indicates that later iterations can introduce instability or divergence, and iterative refinement does not guarantee consistent improvement. **kimi-latest** also steadily declines (SR ~0.86 → ~0.54 with rising GM).
+
+### Figure 2 Analysis (Per-instance stress ratio across models)
+![Per-instance stress ratio comparison across models](image-1.png)
+Figure 2 reports the **Stress Ratio (SR)** on three representative instances (*commanche_dual*, *qh882*, and *power*) for three models. Since SR is defined as **baseline / solver cost**, larger values indicate better performance (lower stress than the baseline), while values near 1.0 indicate baseline-level performance.
+
+The results show a strong **instance-dependent gap** between models. **Gemini2.5pro** achieves very high SR on all three graphs (≈5.7 on *commanche_dual*, ≈3.4 on *qh882*, and ≈2.3 on *power*), suggesting it can occasionally generate solvers that outperform the reference baseline by a large margin on specific instances. In contrast, **Gemini3-pro-preview** stays close to baseline and varies by instance (very low on *commanche_dual*, slightly above 1.0 on *qh882*, and low again on *power*), indicating inconsistent effectiveness across graphs. **kimi-latest** remains around baseline on all three instances (roughly 0.9–1.0), showing more conservative but relatively stable behavior.
