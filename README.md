@@ -79,7 +79,7 @@ In summary, the stress-based graph drawing problem in our pipeline is:
 **eval**
 
 ### Figure 1 Analysis (Multi-model performance across iterations)
-![Figure 1. Multi-LLMs performance across iterations on the SGD graph layout task.](image.png)
+![Figure 1. Multi-LLMs performance across iterations on the SGD graph layout task.](图片1.png）
 Figure 1 compares four LLMs over three iterations using **Stress Ratio** (SR, left axis; higher is better) and the **geometric mean stress cost** (GM, right axis; lower is better). Overall, the two metrics are consistent: when SR drops, GM usually increases, indicating worse layouts with higher stress.
 
 Among all models, **gemini2.0-flash** is the most stable. Its SR stays close to 1.0 and slightly improves by iteration 3 (about 0.95 → 1.02), while GM remains nearly flat, suggesting steady solver quality without large regressions. In contrast, **Gemini3-pro-preview** shows clear degradation across iterations (SR decreases from ~0.60 to ~0.34 and GM increases from ~25k to ~45k), implying the iterative updates did not produce better heuristics.
@@ -87,7 +87,7 @@ Among all models, **gemini2.0-flash** is the most stable. Its SR stays close to 
 **Gemini2.5pro** exhibits non-monotonic behavior: it improves at iteration 2 (SR peaks around 1.27 with low GM), but collapses at iteration 3 (SR drops to ~0.40 and GM jumps to ~35k). This indicates that later iterations can introduce instability or divergence, and iterative refinement does not guarantee consistent improvement. **kimi-latest** also steadily declines (SR ~0.86 → ~0.54 with rising GM).
 
 ### Figure 2 Analysis (Per-instance stress ratio across models)
-![Per-instance stress ratio comparison across models](image-1.png)
+![Per-instance stress ratio comparison across models](图片2.png）
 Figure 2 reports the **Stress Ratio (SR)** on three representative instances (*commanche_dual*, *qh882*, and *power*) for three models. Since SR is defined as **baseline / solver cost**, larger values indicate better performance (lower stress than the baseline), while values near 1.0 indicate baseline-level performance.
 
 The results show a strong **instance-dependent gap** between models. **Gemini2.5pro** achieves very high SR on all three graphs (≈5.7 on *commanche_dual*, ≈3.4 on *qh882*, and ≈2.3 on *power*), suggesting it can occasionally generate solvers that outperform the reference baseline by a large margin on specific instances. In contrast, **Gemini3-pro-preview** stays close to baseline and varies by instance (very low on *commanche_dual*, slightly above 1.0 on *qh882*, and low again on *power*), indicating inconsistent effectiveness across graphs. **kimi-latest** remains around baseline on all three instances (roughly 0.9–1.0), showing more conservative but relatively stable behavior.
